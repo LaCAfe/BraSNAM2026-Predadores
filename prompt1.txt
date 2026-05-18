@@ -1,0 +1,189 @@
+# Prompt 1 — Zero-shot baseline (PT-BR)
+
+This file documents Prompt 1 of the BraSNAM 2026 paper "From Bag-of-Words to
+Reasoning: Comparing Traditional Supervised ML and Zero-Shot LLMs for Sexual
+Predator Identification in Brazilian Portuguese". It is reproduced here for
+reproducibility purposes.
+
+The prompt below was sent verbatim, once per conversation, to four LLMs via
+their respective Batch APIs:
+
+  - Anthropic     claude-opus-4-6
+  - OpenAI        gpt-5.2
+  - Google        gemini-3.1-pro-preview
+  - xAI           grok-4.20
+
+Each request's identifier follows the format `p1__<conv_id>`, where `conv_id`
+matches the `conv_id` column of `results_prompt1.csv`. The 78 conversations
+that were evaluated are available, in full, in `conversations_prompt1.xml`.
+
+==============================================================================
+PROMPT TEMPLATE (exact text sent to every model, every call)
+==============================================================================
+
+The placeholder `{xml_string}` below is replaced, per request, with the
+serialized XML subtree of one `<conversation>` element from the
+PAN-12-BR-pt corpus (see "How conversations were inserted" below).
+
+------------------------------------------------------------------------------
+Você é um especialista em segurança digital e proteção infantil. Analise a conversa abaixo e determine se ela apresenta comportamento predatório sexual.
+
+A conversa está em formato XML. Descrição dos campos:
+- <conversation id="...">: conversa identificada por ID único.
+- <message line="N">: cada mensagem, numerada sequencialmente.
+  - <author>: identificador anônimo do participante.
+  - <time>: horário aproximado (hh:mm ou yyyy-mm-dd hh:mm:ss).
+  - <text>: conteúdo da mensagem.
+
+Conversa:
+{xml_string}
+
+Com base no conteúdo, responda:
+1) Esta é uma conversa predatória (aliciamento sexual de menor, grooming ou exploração sexual)? Responda apenas "Sim" ou "Não".
+2) Explique sua resposta de forma abrangente com base nos elementos da conversa.
+
+Responda EXCLUSIVAMENTE em JSON válido, sem markdown, sem texto adicional:
+{"label": "Sim", "reason": "explicação completa"}
+------------------------------------------------------------------------------
+
+==============================================================================
+HOW CONVERSATIONS WERE INSERTED INTO THE PROMPT
+==============================================================================
+
+The placeholder `{xml_string}` is the verbatim XML serialization of a single
+`<conversation>` element from the PAN-12-BR-pt corpus. In the experiment
+notebook, the substitution is performed by `build_prompt_1()`:
+
+    import xml.etree.ElementTree as ET
+
+    def conv_to_xml_string(conv_elem):
+        return ET.tostring(conv_elem, encoding='unicode')
+
+    XML_FIELD_EXPLANATION = """A conversa está em formato XML. Descrição dos campos:
+    - <conversation id="...">: conversa identificada por ID único.
+    - <message line="N">: cada mensagem, numerada sequencialmente.
+      - <author>: identificador anônimo do participante.
+      - <time>: horário aproximado (hh:mm ou yyyy-mm-dd hh:mm:ss).
+      - <text>: conteúdo da mensagem."""
+
+    def build_prompt_1(xml_string):
+        return f"""Você é um especialista em segurança digital e proteção infantil. Analise a conversa abaixo e determine se ela apresenta comportamento predatório sexual.
+
+    {XML_FIELD_EXPLANATION}
+
+    Conversa:
+    {xml_string}
+
+    Com base no conteúdo, responda:
+    1) Esta é uma conversa predatória (aliciamento sexual de menor, grooming ou exploração sexual)? Responda apenas "Sim" ou "Não".
+    2) Explique sua resposta de forma abrangente com base nos elementos da conversa.
+
+    Responda EXCLUSIVAMENTE em JSON válido, sem markdown, sem texto adicional:
+    {{"label": "Sim", "reason": "explicação completa"}}"""
+
+No normalization, whitespace stripping, attribute reordering, or pretty
+printing was applied to the conversation XML before substitution. The text
+inserted into `{xml_string}` is exactly what `ET.tostring(..., encoding=
+'unicode')` produced from the parsed source corpus, including the
+`<conversation id="...">` wrapper and every `<message line="...">` child
+(with its `<author>`, `<time>`, and `<text>` children).
+
+A typical inserted XML fragment looks like:
+
+    <conversation id="16"><message line="1"><author>3a7249c3...</author><time>...</time><text>...</text></message>...</conversation>
+
+The complete set of 78 substituted subtrees is provided in
+`conversations_prompt1.xml`.
+
+==============================================================================
+SAMPLING (how the 78 conversations were chosen)
+==============================================================================
+
+Conversations were drawn from the PAN-12-BR-pt corpus
+(`pan12-br-all-isys-conversation-corpus.xml`, 828 conversations). A
+conversation is labeled `predatory` iff its author set intersects the 39
+predator MD5 hashes listed in
+`pan12-br-sexual-predator-identification-training-corpus-predators.txt`.
+
+The experiment used:
+
+  - all 39 predatory conversations
+  - 39 negative conversations sampled with `random.seed(42)` followed by
+    `random.sample(neg_convs, 39)`
+
+for a total of 78 conversations. The same 78 IDs are evaluated by every
+model, yielding the 312 rows in `results_prompt1.csv` (78 × 4 models).
+
+==============================================================================
+PER-PROVIDER REQUEST BODIES
+==============================================================================
+
+The prompt string produced by `build_prompt_1(xml_string)` is the *only*
+user-visible content sent to each model. There is no system prompt, no
+few-shot examples, and no tool definitions.
+
+Anthropic (Messages Batches API):
+
+    {
+      "custom_id": "p1__<conv_id>",
+      "params": {
+        "model": "claude-opus-4-6",
+        "max_tokens": 16000,
+        "thinking": {"type": "adaptive"},
+        "messages": [{"role": "user", "content": <prompt>}]
+      }
+    }
+
+OpenAI (Batch API, JSONL):
+
+    {
+      "custom_id": "p1__<conv_id>",
+      "method": "POST",
+      "url": "/v1/chat/completions",
+      "body": {
+        "model": "gpt-5.2",
+        "messages": [{"role": "user", "content": <prompt>}],
+        "reasoning_effort": "high"
+      }
+    }
+
+xAI Grok (Batch, OpenAI-compatible JSONL):
+
+    {
+      "custom_id": "p1__<conv_id>",
+      "method": "POST",
+      "url": "/v1/chat/completions",
+      "body": {
+        "model": "grok-4.20",
+        "messages": [{"role": "user", "content": <prompt>}]
+      }
+    }
+
+Google Gemini (Batch JSONL):
+
+    {
+      "key": "p1__<conv_id>",
+      "request": {
+        "contents": [{"parts": [{"text": <prompt>}]}]
+      }
+    }
+
+==============================================================================
+EXPECTED RESPONSE FORMAT
+==============================================================================
+
+Each model is instructed to return a single JSON object of the form
+
+    {"label": "Sim" | "Não", "reason": "<free text in Portuguese>"}
+
+with no Markdown fencing and no surrounding prose. The "Sim"/"Não" label is
+mapped, downstream, to `predatory` / `negative` for comparison against the
+ground-truth labels in `results_prompt1.csv`.
+
+==============================================================================
+SOURCE CODE OF RECORD
+==============================================================================
+
+The authoritative source of this prompt is the function `build_prompt_1()`
+in the experiment notebook `predadores_br_llm_analysis_batch.ipynb`. If any
+detail of this file diverges from that notebook, the notebook is canonical.
